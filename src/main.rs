@@ -27,70 +27,58 @@ impl FsEntry {
     }
 }
 
-fn main() -> color_eyre::Result<()> {
-    color_eyre::install().unwrap();
+impl FsEntry {
+    fn build(mut self, it: &mut dyn Iterator<Item = Line>) -> Self {
+        while let Some(line) = it.next() {
+            match line {
+                Line::Command(Command::Cd(sub)) => match sub.as_str() {
+                    "/" => {
+                        // muffin,
+                    }
+                    ".." => break,
+                    _ => self.children.push(
+                        FsEntry {
+                            path: sub.clone(),
+                            size: 0,
+                            children: vec![],
+                        }
+                            .build(it),
+                    ),
+                },
+                Line::Entry(Entry::File(size, path)) => {
+                    self.children.push(FsEntry {
+                        path,
+                        size,
+                        children: vec![],
+                    });
+                }
+                _ => {
+                    // ignore other commands
+                }
+            }
+        }
+        self
+    }
+}
 
-    let lines = include_str!("../sample.txt")
+fn main() {
+    let mut lines = include_str!("../sample.txt")
         .lines()
         .map(|l| all_consuming(parse_line)(l).finish().unwrap().1);
 
-    let mut stack = vec![FsEntry {
+    let root = FsEntry {
         path: "/".into(),
         size: 0,
         children: vec![],
-    }];
-
-    for line in lines {
-        println!("{line:?}");
-        match line {
-            Line::Command(cmd) => match cmd {
-                Command::Ls => {
-                    // just ignore those
-                }
-                Command::Cd(path) => match path.as_str() {
-                    "/" => {
-                        // ignore, we're already there
-                    }
-                    ".." => {
-                        let child = stack.pop();
-                        stack.last_mut().unwrap().children.push(child.unwrap());
-
-                    }
-                    _ => {
-                        let node = FsEntry {
-                            path: path.clone(),
-                            size: 0,
-                            children: vec![],
-                        };
-                        stack.push(node);
-                    }
-                },
-            },
-            Line::Entry(entry) => match entry {
-                Entry::Dir(_) => {
-                    // ignore, we'll do that when we `cd` into them
-                }
-                Entry::File(size, path) => {
-                    let node = FsEntry {
-                        size,
-                        path,
-                        children: vec![],
-                    };
-                    stack.last_mut().unwrap().children.push(node);
-                }
-            },
-        }
     }
-
-    let root = stack.first_mut().unwrap();
+        .build(&mut lines);
     dbg!(&root);
 
+    // solving part 1 because it's the same difficulty as part 2, just less code
     let sum = root
         .all_dirs()
         .map(|d| d.total_size())
-        .filter(|&s| s <= 100_000)
+        .filter(|&s| s < 100_000)
         .sum::<u64>();
     dbg!(sum);
-
-    Ok(())
 }

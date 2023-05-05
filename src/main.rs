@@ -1,5 +1,4 @@
 use camino::Utf8PathBuf;
-use id_tree::{InsertBehavior, Node, Tree};
 use nom::combinator::all_consuming;
 use nom::Finish;
 use advent_of_code_day7::parse::{Command, Entry, Line, parse_line};
@@ -8,14 +7,24 @@ use advent_of_code_day7::parse::{Command, Entry, Line, parse_line};
 struct FsEntry {
     path: Utf8PathBuf,
     size: u64,
+    children: Vec<FsEntry>,
 }
 
-fn total_size(tree: &Tree<FsEntry>, node: &Node<FsEntry>) -> color_eyre::Result<u64> {
-    let mut total = node.data().size;
-    for child in node.children() {
-        total += total_size(tree, tree.get(child)?)?;
+impl FsEntry {
+    fn total_size(&self) -> u64 {
+        self.size + self.children.iter().map(|c| c.total_size()).sum::<u64>()
     }
-    Ok(total)
+
+    fn all_dirs(&self) -> Box<dyn Iterator<Item = &FsEntry> + '_> {
+        Box::new(
+            std::iter::once(self).chain(
+                self.children
+                    .iter()
+                    .filter(|c| !c.children.is_empty())
+                    .flat_map(|c| c.all_dirs()),
+            ),
+        )
+    }
 }
 
 fn main() -> color_eyre::Result<()> {
@@ -25,15 +34,11 @@ fn main() -> color_eyre::Result<()> {
         .lines()
         .map(|l| all_consuming(parse_line)(l).finish().unwrap().1);
 
-    let mut tree = Tree::<FsEntry>::new();
-    let root = tree.insert(
-        Node::new(FsEntry {
-            path: "/".into(),
-            size: 0,
-        }),
-        InsertBehavior::AsRoot,
-    )?;
-    let mut curr = root;
+    let mut stack = vec![FsEntry {
+        path: "/".into(),
+        size: 0,
+        children: vec![],
+    }];
 
     for line in lines {
         println!("{line:?}");
@@ -47,14 +52,17 @@ fn main() -> color_eyre::Result<()> {
                         // ignore, we're already there
                     }
                     ".." => {
-                        curr = tree.get(&curr)?.parent().unwrap().clone();
+                        let child = stack.pop();
+                        stack.last_mut().unwrap().children.push(child.unwrap());
+
                     }
                     _ => {
-                        let node = Node::new(FsEntry {
+                        let node = FsEntry {
                             path: path.clone(),
                             size: 0,
-                        });
-                        curr = tree.insert(node, InsertBehavior::UnderNode(&curr))?;
+                            children: vec![],
+                        };
+                        stack.push(node);
                     }
                 },
             },
@@ -63,45 +71,26 @@ fn main() -> color_eyre::Result<()> {
                     // ignore, we'll do that when we `cd` into them
                 }
                 Entry::File(size, path) => {
-                    let node = Node::new(FsEntry { size, path });
-                    tree.insert(node, InsertBehavior::UnderNode(&curr))?;
+                    let node = FsEntry {
+                        size,
+                        path,
+                        children: vec![],
+                    };
+                    stack.last_mut().unwrap().children.push(node);
                 }
             },
         }
     }
 
-    let mut s = String::new();
-    tree.write_formatted(&mut s)?;
-    println!("{s}");
+    let root = stack.first_mut().unwrap();
+    dbg!(&root);
 
-    let sum = tree
-        .traverse_pre_order(tree.root_node_id().unwrap())?
-        // only consider folders:
-        .filter(|n| !n.children().is_empty())
-        .map(|n| total_size(&tree, n).unwrap())
+    let sum = root
+        .all_dirs()
+        .map(|d| d.total_size())
         .filter(|&s| s <= 100_000)
-        .inspect(|s| {
-            dbg!(s);
-        })
         .sum::<u64>();
     dbg!(sum);
-
-    let total_space = 70000000_u64;
-    let used_space = total_size(&tree, tree.get(tree.root_node_id().unwrap())?)?;
-    let free_space = total_space.checked_sub(dbg!(used_space)).unwrap();
-    let needed_free_space = 30000000_u64;
-    let minimum_space_to_free = needed_free_space.checked_sub(free_space).unwrap();
-
-    let size_to_remove = tree
-        .traverse_pre_order(tree.root_node_id().unwrap())?
-        .filter(|n| !n.children().is_empty())
-        .map(|n| total_size(&tree, n).unwrap())
-        .filter(|&s| s >= minimum_space_to_free)
-        .inspect(|s| {
-            dbg!(s);
-        })
-        .min();
-    dbg!(size_to_remove);
 
     Ok(())
 }
